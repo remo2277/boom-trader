@@ -1470,79 +1470,95 @@ async function fetchTicker(sym, tf) {
   return { sym, quote, inds, data };
 }
 
+// Dedicated current price fetch — always uses 1d range for latest quote regardless of timeframe
+async function fetchCurrentQuote(sym) {
+  const result = await fetchYahoo(sym, '1d', '5d');
+  return getCurrentQuote(result);
+}
+
 async function fetchAllData() {
-  if (isFetching) return; // skip if previous fetch still running
+  if (isFetching) return;
   isFetching = true;
-  updateMarketStatus();
-  document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+  try {
+    updateMarketStatus();
+    document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
 
-  const list = document.getElementById('stockList');
+    const list = document.getElementById('stockList');
 
-  // First render: show loading cards
-  if (list.querySelector('.loading-msg')) {
-    list.innerHTML = TICKERS.map(t => `
-      <div class="stock-card" id="card-${t.sym.replace('.','_')}">
-        <div class="stock-header">
-          <div class="stock-left">
-            <div class="signal-badge" id="badge-${t.sym.replace('.','_')}"></div>
-            <div>
-              <div class="stock-ticker">${t.sym}</div>
-              <div class="stock-name">${t.name}</div>
+    // First render: show loading cards
+    if (list.querySelector('.loading-msg')) {
+      list.innerHTML = TICKERS.map(t => `
+        <div class="stock-card" id="card-${t.sym.replace('.','_')}">
+          <div class="stock-header">
+            <div class="stock-left">
+              <div class="signal-badge" id="badge-${t.sym.replace('.','_')}"></div>
+              <div>
+                <div class="stock-ticker">${t.sym}</div>
+                <div class="stock-name">${t.name}</div>
+              </div>
+            </div>
+            <div class="stock-price-block">
+              <div class="loading-shimmer" style="width:70px;height:14px;margin-bottom:4px"></div>
+              <div class="loading-shimmer" style="width:50px;height:10px"></div>
             </div>
           </div>
-          <div class="stock-price-block">
-            <div class="loading-shimmer" style="width:70px;height:14px;margin-bottom:4px"></div>
-            <div class="loading-shimmer" style="width:50px;height:10px"></div>
+          <div class="indicators-row" id="inds-${t.sym.replace('.','_')}">
+            ${[0,1,2,3,4].map(()=>`<div class="ind-cell"><div class="loading-shimmer"></div></div>`).join('')}
           </div>
         </div>
-        <div class="indicators-row" id="inds-${t.sym.replace('.','_')}">
-          ${[0,1,2,3,4].map(()=>`<div class="ind-cell"><div class="loading-shimmer"></div></div>`).join('')}
-        </div>
-      </div>
-    `).join('');
+      `).join('');
+      TICKERS.forEach(t => {
+        const card = document.getElementById(`card-${t.sym.replace('.','_')}`);
+        if (card) card.addEventListener('click', () => openModal(t.sym, t.name));
+      });
+    }
 
-    // Add click handlers
-    TICKERS.forEach(t => {
-      const card = document.getElementById(`card-${t.sym.replace('.','_')}`);
-      if (card) card.addEventListener('click', () => openModal(t.sym, t.name));
-    });
-  }
-
-  // Fetch all tickers in parallel (batched to avoid throttling)
-  const batchSize = 5;
-  for (let i = 0; i < TICKERS.length; i += batchSize) {
-    const batch = TICKERS.slice(i, i + batchSize);
-    await Promise.all(batch.map(async t => {
-      const prev = cachedData[t.sym];
-      const fresh = await fetchTicker(t.sym, currentTf);
-      if (fresh) {
-        if (prev?.inds) {
-          processSignals(t.sym, fresh.inds, prev.inds);
-        } else {
-          // First load only — detect current state and run historical scan
-          detectCurrentState(t.sym, fresh.inds);
-          if (getSignalState(t.sym).state !== 'none') renderCard(t.sym, t.name, fresh);
-          if (isFirstLoad) {
-            const tf = TF_MAP[currentTf];
-            const histRanges = { '1m':'7d', '5m':'60d', '15m':'60d', '1h':'2y', '1d':'2y' };
-            const histRange = histRanges[currentTf] || '1y';
-            fetchYahoo(t.sym, tf.interval, histRange).then(result => {
-              const histData = extractOHLCV(result);
-              if (histData && histData.length > 30) {
-                const series = computeFullSeries(histData);
-                scanHistoricalSignals(t.sym, histData, series);
+    // Fetch all tickers in parallel (batched to avoid throttling)
+    const batchSize = 5;
+    for (let i = 0; i < TICKERS.length; i += batchSize) {
+      const batch = TICKERS.slice(i, i + batchSize);
+      await Promise.all(batch.map(async t => {
+        try {
+          const prev = cachedData[t.sym];
+          // Always fetch current quote separately for consistent price display
+          const [fresh, currentQuote] = await Promise.all([
+            fetchTicker(t.sym, currentTf),
+            fetchCurrentQuote(t.sym)
+          ]);
+          if (fresh) {
+            // Override quote with dedicated real-time price
+            if (currentQuote) fresh.quote = currentQuote;
+            if (prev?.inds) {
+              processSignals(t.sym, fresh.inds, prev.inds);
+            } else {
+              detectCurrentState(t.sym, fresh.inds);
+              if (getSignalState(t.sym).state !== 'none') renderCard(t.sym, t.name, fresh);
+              if (isFirstLoad) {
+                const tf = TF_MAP[currentTf];
+                const histRanges = { '1m':'7d', '5m':'60d', '15m':'60d', '1h':'2y', '1d':'2y' };
+                const histRange = histRanges[currentTf] || '1y';
+                fetchYahoo(t.sym, tf.interval, histRange).then(result => {
+                  const histData = extractOHLCV(result);
+                  if (histData && histData.length > 30) {
+                    const series = computeFullSeries(histData);
+                    scanHistoricalSignals(t.sym, histData, series);
+                  }
+                });
               }
-            });
+            }
+            cachedData[t.sym] = fresh;
+            renderCard(t.sym, t.name, fresh);
           }
+        } catch(e) {
+          console.warn('Error fetching', t.sym, e);
         }
-        cachedData[t.sym] = fresh;
-        renderCard(t.sym, t.name, fresh);
-      }
-    }));
-  }
+      }));
+    }
 
-  isFirstLoad = false;
-  isFetching = false;
+    isFirstLoad = false;
+  } finally {
+    isFetching = false;
+  }
 }
 
 function renderCard(sym, name, d) {

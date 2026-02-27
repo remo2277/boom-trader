@@ -700,11 +700,8 @@
     </div>
   </div>
   <div class="tf-selector" id="tfSelector">
-    <button class="tf-btn active" data-tf="1m">1M</button>
     <button class="tf-btn" data-tf="5m">5M</button>
-    <button class="tf-btn" data-tf="15m">15M</button>
-    <button class="tf-btn" data-tf="1h">1H</button>
-    <button class="tf-btn" data-tf="1d">1D</button>
+    <button class="tf-btn active" data-tf="1d">1D</button>
   </div>
 </div>
 
@@ -828,11 +825,8 @@
   </div>
   <div class="modal-content">
     <div class="tf-tabs" id="modalTfTabs">
-      <button class="tf-tab active" data-tf="1m" onclick="switchModalTf(this)">1M</button>
       <button class="tf-tab" data-tf="5m" onclick="switchModalTf(this)">5M</button>
-      <button class="tf-tab" data-tf="15m" onclick="switchModalTf(this)">15M</button>
-      <button class="tf-tab" data-tf="1h" onclick="switchModalTf(this)">1H</button>
-      <button class="tf-tab" data-tf="1d" onclick="switchModalTf(this)">1D</button>
+      <button class="tf-tab active" data-tf="1d" onclick="switchModalTf(this)">1D</button>
     </div>
     <div class="range-selector" id="rangeSelector" style="display:none">
       <button class="range-btn active" data-range="5d" onclick="switchRange(this)">5D</button>
@@ -883,19 +877,13 @@ const TICKERS = [
 ];
 
 const TF_MAP = {
-  '1m': {interval:'1m', range:'1d'},
   '5m': {interval:'5m', range:'5d'},
-  '15m': {interval:'15m', range:'5d'},
-  '1h': {interval:'1h', range:'1mo'},
   '1d': {interval:'1d', range:'6mo'}
 };
 
 // Range options per timeframe
 const TF_RANGES = {
-  '1m': [{label:'1D', val:'1d'}, {label:'2D', val:'2d'}],
   '5m': [{label:'5D', val:'5d'}, {label:'1M', val:'1mo'}],
-  '15m': [{label:'5D', val:'5d'}, {label:'1M', val:'1mo'}, {label:'3M', val:'3mo'}],
-  '1h': [{label:'1M', val:'1mo'}, {label:'3M', val:'3mo'}, {label:'6M', val:'6mo'}],
   '1d': [{label:'1M', val:'1mo'}, {label:'3M', val:'3mo'}, {label:'6M', val:'6mo'}, {label:'1Y', val:'1y'}, {label:'2Y', val:'2y'}]
 };
 
@@ -927,9 +915,9 @@ const alertLog = [];
 // Cached data
 const cachedData = {};
 
-let currentTf = '1m';
+let currentTf = '1d';
 let currentModalTicker = null;
-let currentModalTf = '1m';
+let currentModalTf = '1d';
 let refreshTimer = null;
 let isFirstLoad = true;
 let isFetching = false;
@@ -1523,7 +1511,7 @@ async function fetchAllData() {
             if (getSignalState(t.sym).state !== 'none') renderCard(t.sym, t.name, fresh);
             if (isFirstLoad) {
               const tf = TF_MAP[currentTf];
-              const histRanges = { '1m':'7d', '5m':'60d', '15m':'60d', '1h':'2y', '1d':'2y' };
+              const histRanges = { '5m':'60d', '1d':'2y' };
               const histRange = histRanges[currentTf] || '1y';
               fetchYahoo(t.sym, tf.interval, histRange).then(result => {
                 const histData = extractOHLCV(result);
@@ -1649,7 +1637,8 @@ function formatPrice(p) {
 // ============================================================
 function openModal(sym, name) {
   currentModalTicker = sym;
-  currentModalTf = '1m';
+  currentModalTf = '1d';
+  currentModalRange = TF_MAP['1d'].range;
   currentModalRange = TF_MAP['1m'].range;
   document.getElementById('modalTicker').textContent = sym;
   document.getElementById('modalName').textContent = name;
@@ -1668,7 +1657,7 @@ function openModal(sym, name) {
 
   // Set first tab active and init range selector
   document.querySelectorAll('.tf-tab').forEach((t,i) => t.classList.toggle('active', i===0));
-  const ranges = TF_RANGES['1m'] || [];
+  const ranges = TF_RANGES['1d'] || [];
   const rangeSelector = document.getElementById('rangeSelector');
   if (ranges.length > 0) {
     rangeSelector.style.display = 'flex';
@@ -1680,7 +1669,7 @@ function openModal(sym, name) {
     rangeSelector.style.display = 'none';
   }
 
-  renderModalIndicators(sym, '1m');
+  renderModalIndicators(sym, '1d');
   document.getElementById('detailModal').classList.add('open');
 }
 

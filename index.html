@@ -305,7 +305,34 @@
     100% { background-position: -200% 0; }
   }
 
-  /* DETAIL MODAL */
+  /* CHART RANGE SELECTOR */
+  .range-selector {
+    display: flex;
+    gap: 4px;
+    padding: 0 12px 10px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .range-selector::-webkit-scrollbar { display: none; }
+
+  .range-btn {
+    padding: 4px 10px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    color: var(--text2);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.2s;
+  }
+
+  .range-btn.active {
+    background: rgba(0,212,255,0.15);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
   .modal-overlay {
     position: fixed;
     inset: 0;
@@ -807,6 +834,14 @@
       <button class="tf-tab" data-tf="1h" onclick="switchModalTf(this)">1H</button>
       <button class="tf-tab" data-tf="1d" onclick="switchModalTf(this)">1D</button>
     </div>
+    <div class="range-selector" id="rangeSelector" style="display:none">
+      <button class="range-btn active" data-range="5d" onclick="switchRange(this)">5D</button>
+      <button class="range-btn" data-range="1mo" onclick="switchRange(this)">1M</button>
+      <button class="range-btn" data-range="3mo" onclick="switchRange(this)">3M</button>
+      <button class="range-btn" data-range="6mo" onclick="switchRange(this)">6M</button>
+      <button class="range-btn" data-range="1y" onclick="switchRange(this)">1Y</button>
+      <button class="range-btn" data-range="2y" onclick="switchRange(this)">2Y</button>
+    </div>
     <div id="modalIndicators"></div>
   </div>
 </div>
@@ -854,6 +889,17 @@ const TF_MAP = {
   '1h': {interval:'1h', range:'1mo'},
   '1d': {interval:'1d', range:'6mo'}
 };
+
+// Range options per timeframe
+const TF_RANGES = {
+  '1m': [{label:'1D', val:'1d'}, {label:'2D', val:'2d'}],
+  '5m': [{label:'5D', val:'5d'}, {label:'1M', val:'1mo'}],
+  '15m': [{label:'5D', val:'5d'}, {label:'1M', val:'1mo'}, {label:'3M', val:'3mo'}],
+  '1h': [{label:'1M', val:'1mo'}, {label:'3M', val:'3mo'}, {label:'6M', val:'6mo'}],
+  '1d': [{label:'1M', val:'1mo'}, {label:'3M', val:'3mo'}, {label:'6M', val:'6mo'}, {label:'1Y', val:'1y'}, {label:'2Y', val:'2y'}]
+};
+
+let currentModalRange = null;
 
 // Signal state per ticker
 const signalState = {};
@@ -1379,6 +1425,7 @@ function formatPrice(p) {
 function openModal(sym, name) {
   currentModalTicker = sym;
   currentModalTf = '1m';
+  currentModalRange = TF_MAP['1m'].range;
   document.getElementById('modalTicker').textContent = sym;
   document.getElementById('modalName').textContent = name;
 
@@ -1394,8 +1441,19 @@ function openModal(sym, name) {
     chEl.className = `stock-change ${chg >= 0 ? 'up' : 'down'}`;
   }
 
-  // Set first tab active
+  // Set first tab active and init range selector
   document.querySelectorAll('.tf-tab').forEach((t,i) => t.classList.toggle('active', i===0));
+  const ranges = TF_RANGES['1m'] || [];
+  const rangeSelector = document.getElementById('rangeSelector');
+  if (ranges.length > 0) {
+    rangeSelector.style.display = 'flex';
+    rangeSelector.innerHTML = ranges.map((r,i) =>
+      `<button class="range-btn ${i===0?'active':''}" data-range="${r.val}" onclick="switchRange(this)">${r.label}</button>`
+    ).join('');
+    currentModalRange = ranges[0].val;
+  } else {
+    rangeSelector.style.display = 'none';
+  }
 
   renderModalIndicators(sym, '1m');
   document.getElementById('detailModal').classList.add('open');
@@ -1410,18 +1468,46 @@ function switchModalTf(btn) {
   document.querySelectorAll('.tf-tab').forEach(t => t.classList.remove('active'));
   btn.classList.add('active');
   currentModalTf = btn.dataset.tf;
-  if (currentModalTicker) {
-    // Fetch fresh data for this tf if not cached
-    fetchModalData(currentModalTicker, currentModalTf);
+
+  // Update range selector for this timeframe
+  const ranges = TF_RANGES[currentModalTf] || [];
+  const rangeSelector = document.getElementById('rangeSelector');
+  if (ranges.length > 0) {
+    rangeSelector.style.display = 'flex';
+    rangeSelector.innerHTML = ranges.map((r, i) => 
+      `<button class="range-btn ${i===0?'active':''}" data-range="${r.val}" onclick="switchRange(this)">${r.label}</button>`
+    ).join('');
+    currentModalRange = ranges[0].val;
+  } else {
+    rangeSelector.style.display = 'none';
+    currentModalRange = TF_MAP[currentModalTf].range;
   }
+
+  if (currentModalTicker) fetchModalData(currentModalTicker, currentModalTf, currentModalRange);
 }
 
-async function fetchModalData(sym, tf) {
+function switchRange(btn) {
+  document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  currentModalRange = btn.dataset.range;
+  if (currentModalTicker) fetchModalData(currentModalTicker, currentModalTf, currentModalRange);
+}
+
+async function fetchModalData(sym, tf, range) {
   const indsEl = document.getElementById('modalIndicators');
   indsEl.innerHTML = '<div class="loading-msg">Loading...</div>';
-  const d = await fetchTicker(sym, tf);
-  if (d) renderModalIndicators(sym, tf, d);
-  else indsEl.innerHTML = '<div class="error-msg">Failed to load data</div>';
+  const interval = TF_MAP[tf].interval;
+  const useRange = range || TF_MAP[tf].range;
+  const result = await fetchYahoo(sym, interval, useRange);
+  const data = extractOHLCV(result);
+  const quote = getCurrentQuote(result);
+  if (!data || data.length < 30) {
+    indsEl.innerHTML = '<div class="error-msg">Failed to load data</div>';
+    return;
+  }
+  const inds = computeIndicators(data);
+  const d = { sym, quote, inds, data };
+  renderModalIndicators(sym, tf, d);
 }
 
 function renderModalIndicators(sym, tf, d) {
@@ -1435,8 +1521,14 @@ function renderModalIndicators(sym, tf, d) {
   const el = document.getElementById('modalIndicators');
 
   el.innerHTML = `
+    ${renderIndSection('CCI', [
+      {label:'CCI(9)', val:inds.cci9.val, color:'#ff88aa'},
+      {label:'CCI(12)', val:inds.cci12.val, color:'#88aaff'},
+      {label:'CCI(20)', val:inds.cci20.val, color:'#88ffcc'}
+    ], inds.data, inds.cci9.series, inds.cci12.series, inds.cci20.series)}
+
     ${renderIndSection('CHAIKIN VOLATILITY', [
-      {label:'ChVol(10,10)', val:inds.chaikin.val, color:'#00d4ff', series: inds.chaikin.series, seriesNames:['ChVol']}
+      {label:'ChVol(10,10)', val:inds.chaikin.val, color:'#00d4ff'}
     ], inds.data)}
 
     ${renderIndSection('STOCHASTIC (10,5,2)', [
@@ -1445,28 +1537,22 @@ function renderModalIndicators(sym, tf, d) {
     ], inds.data, inds.stochK.series, inds.stochD.series)}
 
     ${renderIndSection('LRS (10)', [
-      {label:'LRS', val:inds.lrs.val, color:'#ff88cc', series: inds.lrs.series}
+      {label:'LRS', val:inds.lrs.val, color:'#ff88cc'}
     ], inds.data)}
 
     ${renderIndSection('RSI', [
       {label:'RSI(20)', val:inds.rsi20.val, color:'#4488ff'},
       {label:'RSI(9)', val:inds.rsi9.val, color:'#88ffcc'}
     ], inds.data, inds.rsi20.series, inds.rsi9.series)}
-
-    ${renderIndSection('CCI', [
-      {label:'CCI(9)', val:inds.cci9.val, color:'#ff88aa'},
-      {label:'CCI(12)', val:inds.cci12.val, color:'#88aaff'},
-      {label:'CCI(20)', val:inds.cci20.val, color:'#88ffcc'}
-    ], inds.data, inds.cci9.series, inds.cci12.series, inds.cci20.series)}
   `;
 
   // Draw charts after render
   requestAnimationFrame(() => {
+    drawChart('chart-cci', inds.cci9.series, ['#ff88aa', '#88aaff', '#88ffcc'], inds.cci12.series, inds.cci20.series);
     drawChart('chart-chaikin', inds.chaikin.series, ['#00d4ff']);
     drawChart('chart-stoch', inds.stochK.series, ['#ff3355', '#00ff88'], inds.stochD.series);
     drawChart('chart-lrs', inds.lrs.series, ['#ff88cc']);
     drawChart('chart-rsi', inds.rsi20.series, ['#4488ff', '#88ffcc'], inds.rsi9.series);
-    drawChart('chart-cci', inds.cci9.series, ['#ff88aa', '#88aaff', '#88ffcc'], inds.cci12.series, inds.cci20.series);
   });
 }
 

@@ -1331,9 +1331,23 @@ function scanHistoricalSignals(sym, data, series) {
     if (!b) continue;
 
     const ts = data[i]?.t;
-    const timeStr = ts
-      ? new Date(ts).toLocaleString('en-US', {month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit'})
-      : 'Historical';
+    if (!ts) continue;
+
+    // Never alert on BTC
+    if (sym === 'BTC-USD') continue;
+
+    // Only process bars during market hours
+    if (sym !== 'BTC-USD') {
+      const barDate = new Date(ts);
+      const etStr = barDate.toLocaleString('en-US', {timeZone: 'America/New_York'});
+      const et = new Date(etStr);
+      const day = et.getDay();
+      const mins = et.getHours() * 60 + et.getMinutes();
+      if (day === 0 || day === 6) continue;
+      if (mins < 570 || mins >= 960) continue;
+    }
+
+    const timeStr = new Date(ts).toLocaleString('en-US', {month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit'});
 
     // Chaikin crosses above +40 → arm system (re-arm even if already in a state)
     if (chaikinCrossedAbove(b)) {
@@ -1365,6 +1379,10 @@ function buildIndsHistory(data) {
 }
 
 function fireAlert(sym, level, msg) {
+  // Never alert on BTC
+  if (sym === 'BTC-USD') return;
+  // Only fire live alerts during market hours
+  if (!isMarketOpen(sym)) return;
   const now = new Date();
   const timeStr = now.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
   alertLog.unshift({ sym, level, msg, time: timeStr, ts: now.getTime(), tf: currentTf });

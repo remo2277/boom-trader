@@ -1192,13 +1192,14 @@ function computeIndicators(data) {
 function computeFullSeries(data) {
   if (!data || data.length < 30) return null;
   const closes = data.map(d => d.c);
+  const stoch = calcStoch(data, 10, 5, 2);
   return {
     cci9:    calcCCI(data, 9),
     cci12:   calcCCI(data, 12),
     cci20:   calcCCI(data, 20),
     chaikin: calcChaikinVol(data, 10, 10),
-    stochK:  calcStoch(data, 10, 5, 2).k,
-    stochD:  calcStoch(data, 10, 5, 2).d,
+    stochK:  stoch.k,
+    stochD:  stoch.d,
     lrs:     calcLRS(closes, 10),
     rsi9:    calcRSI(closes, 9),
     rsi20:   calcRSI(closes, 20),
@@ -1278,9 +1279,8 @@ function processSignals(sym, inds, prevInds) {
     prevChaikin: prevInds.chaikin.val, prevStochK: prevInds.stochK.val, prevStochD: prevInds.stochD.val,
   };
 
-  // Chaikin crosses above +40 → arm system (yellow)
-  // Only trigger on fresh cross — if already armed, ignore
-  if (chaikinCrossedAbove(b) && st.state === 'none') {
+  // Chaikin crosses above +40 → arm system (re-arm on every fresh cross)
+  if (chaikinCrossedAbove(b)) {
     st.state = 'yellow';
     fireAlert(sym, 'yellow', `Chaikin crossed +${CHAIKIN_TRIGGER} at bar close — watching Stochastic`);
     return;
@@ -1335,8 +1335,8 @@ function scanHistoricalSignals(sym, data, series) {
       ? new Date(ts).toLocaleString('en-US', {month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit'})
       : 'Historical';
 
-    // Chaikin crosses above +40 → arm system (only if not already armed)
-    if (chaikinCrossedAbove(b) && scanState === 'none') {
+    // Chaikin crosses above +40 → arm system (re-arm even if already in a state)
+    if (chaikinCrossedAbove(b)) {
       scanState = 'yellow';
       historicalAlerts.push({ sym, level:'yellow', msg:`Chaikin crossed +${CHAIKIN_TRIGGER} at bar close`, time:timeStr, historical:true, ts: ts || 0, tf: currentTf });
       continue;

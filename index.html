@@ -864,7 +864,7 @@ const TICKERS = [
   {sym:'RDDT', name:'Reddit'},
   {sym:'APP', name:'AppLovin'},
   {sym:'CRWD', name:'CrowdStrike'},
-  {sym:'BTC-USD', name:'Bitcoin USD'},
+
   {sym:'QQQ', name:'Invesco QQQ'},
   {sym:'SHOP', name:'Shopify'},
   {sym:'SNOW', name:'Snowflake'},
@@ -1470,7 +1470,7 @@ async function fetchAllData() {
 
     const list = document.getElementById('stockList');
 
-    // First render: show loading cards
+    // First render: show loading skeleton cards
     if (list.querySelector('.loading-msg')) {
       list.innerHTML = TICKERS.map(t => `
         <div class="stock-card" id="card-${t.sym.replace('.','_')}">
@@ -1498,7 +1498,7 @@ async function fetchAllData() {
       });
     }
 
-    // Fetch all tickers in parallel
+    // Fetch live data for all tickers in parallel — ONLY indicator+price data, no history
     await Promise.all(TICKERS.map(async t => {
       try {
         const prev = cachedData[t.sym];
@@ -1508,19 +1508,6 @@ async function fetchAllData() {
             processSignals(t.sym, fresh.inds, prev.inds);
           } else {
             detectCurrentState(t.sym, fresh.inds);
-            if (getSignalState(t.sym).state !== 'none') renderCard(t.sym, t.name, fresh);
-            if (isFirstLoad) {
-              const tf = TF_MAP[currentTf];
-              const histRanges = { '5m':'60d', '1d':'2y' };
-              const histRange = histRanges[currentTf] || '1y';
-              fetchYahoo(t.sym, tf.interval, histRange).then(result => {
-                const histData = extractOHLCV(result);
-                if (histData && histData.length > 30) {
-                  const series = computeFullSeries(histData);
-                  scanHistoricalSignals(t.sym, histData, series);
-                }
-              });
-            }
           }
           cachedData[t.sym] = fresh;
           renderCard(t.sym, t.name, fresh);
@@ -1530,9 +1517,38 @@ async function fetchAllData() {
       }
     }));
 
-    isFirstLoad = false;
+    // On first load, kick off historical scan in background AFTER live data is done
+    // This never blocks the refresh cycle
+    if (isFirstLoad) {
+      isFirstLoad = false;
+      runHistoricalScan();
+    }
+
   } finally {
     isFetching = false;
+  }
+}
+
+// Historical scan runs completely independently — never blocks live refresh
+async function runHistoricalScan() {
+  const tf = TF_MAP[currentTf];
+  const histRanges = { '5m':'60d', '1d':'2y' };
+  const histRange = histRanges[currentTf] || '60d';
+  const scanTf = currentTf;
+
+  for (const t of TICKERS) {
+    // Small delay between tickers to avoid rate limiting
+    await new Promise(r => setTimeout(r, 200));
+    try {
+      const result = await fetchYahoo(t.sym, tf.interval, histRange);
+      const histData = extractOHLCV(result);
+      if (histData && histData.length > 30 && scanTf === currentTf) {
+        const series = computeFullSeries(histData);
+        scanHistoricalSignals(t.sym, histData, series);
+      }
+    } catch(e) {
+      console.warn('Historical scan error', t.sym, e);
+    }
   }
 }
 
@@ -2004,6 +2020,7 @@ document.getElementById('tfSelector').addEventListener('click', e => {
   btn.classList.add('active');
   currentTf = btn.dataset.tf;
   isFirstLoad = true;
+  isFetching = false;
   // Reset all card visuals to reflect new timeframe states
   TICKERS.forEach(t => {
     const d = cachedData[t.sym];

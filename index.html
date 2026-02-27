@@ -1430,6 +1430,7 @@ function renderModalIndicators(sym, tf, d) {
     document.getElementById('modalIndicators').innerHTML = '<div class="error-msg">No data</div>';
     return;
   }
+  window._modalData = d;
   const inds = d.inds;
   const el = document.getElementById('modalIndicators');
 
@@ -1598,15 +1599,22 @@ function drawChart(canvasId, series1, colors, series2, series3) {
 
     // Tooltip values
     if (tooltip) {
+      const idx = Math.round(pct * (series1.length - 1));
+      // Get timestamp from data if available
+      let timeStr = '';
+      if (window._modalData && window._modalData.data && window._modalData.data[idx]) {
+        const ts = window._modalData.data[idx].t;
+        const d = new Date(ts);
+        timeStr = `<div style="color:var(--text3);font-size:9px;margin-bottom:3px">${d.toLocaleDateString('en-US',{month:'short',day:'numeric'})} ${d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})}</div>`;
+      }
       const lines = allSeries.map((series, si) => {
-        const idx = Math.round(pct * (series.length - 1));
         const v = series[Math.min(idx, series.length-1)];
         const label = si === 0 ? 'L1' : si === 1 ? 'L2' : 'L3';
         return `<span style="color:${colors[si]||colors[0]}">${label}: ${v != null ? v.toFixed(2) : '--'}</span>`;
       });
-      tooltip.innerHTML = lines.join('  ');
+      tooltip.innerHTML = timeStr + lines.join('  ');
       tooltip.style.display = 'block';
-      const tx = Math.min(mx + 8, W - 120);
+      const tx = Math.min(mx + 8, W - 140);
       tooltip.style.left = tx + 'px';
       tooltip.style.top = '4px';
     }

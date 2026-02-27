@@ -42,7 +42,7 @@ async function fetchAMZN() {
   const n = fetchCount;
   log(`Fetch #${n} started`);
 
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/AMZN?interval=1d&range=5d`;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/AMZN?interval=1m&range=1d`;
   const proxy = `https://corsproxy.io/?${encodeURIComponent(url)}`;
 
   try {
@@ -52,9 +52,19 @@ async function fetchAMZN() {
     if (!res.ok) { log(`Fetch #${n} HTTP error ${res.status}`, 'err'); return; }
     const json = await res.json();
     const meta = json?.chart?.result?.[0]?.meta;
-    const price = meta?.regularMarketPrice;
-    log(`Fetch #${n} OK in ${elapsed}ms — price: $${price}`, 'ok');
-    document.getElementById('price').textContent = `AMZN $${price}`;
+    const quotes = json?.chart?.result?.[0]?.indicators?.quote?.[0];
+    const lastClose = quotes?.close ? quotes.close.filter(x => x != null).pop() : null;
+    const fields = {
+      regularMarketPrice: meta?.regularMarketPrice,
+      chartPreviousClose: meta?.chartPreviousClose,
+      previousClose: meta?.previousClose,
+      lastOHLCVclose: lastClose,
+      regularMarketDayHigh: meta?.regularMarketDayHigh,
+      regularMarketDayLow: meta?.regularMarketDayLow,
+    };
+    log(`Fetch #${n} OK in ${elapsed}ms`, 'ok');
+    Object.entries(fields).forEach(([k, v]) => log(`  ${k}: $${v !== undefined ? v : 'N/A'}`));
+    document.getElementById('price').textContent = `AMZN last: $${lastClose?.toFixed(2)}`;
     document.getElementById('lastUpdate').textContent = `Updated ${new Date().toLocaleTimeString()} (fetch #${n}, ${elapsed}ms)`;
   } catch(e) {
     log(`Fetch #${n} ERROR: ${e.message}`, 'err');

@@ -1452,6 +1452,14 @@ function updateAlertBadge() {
 // ============================================================
 // FETCH & RENDER
 // ============================================================
+
+// Fast price-only fetch — tiny payload, used every 5 seconds
+async function fetchPrice(sym) {
+  const result = await fetchYahoo(sym, '1d', '2d');
+  return getCurrentQuote(result);
+}
+
+// Full fetch — OHLCV + indicators, only on first load or timeframe change
 async function fetchTicker(sym, tf) {
   const {interval, range} = TF_MAP[tf];
   const result = await fetchYahoo(sym, interval, range);
@@ -1471,7 +1479,7 @@ async function fetchAllData() {
 
     const list = document.getElementById('stockList');
 
-    // First render: show loading skeleton cards
+    // First render skeleton
     if (list.querySelector('.loading-msg')) {
       list.innerHTML = TICKERS.map(t => `
         <div class="stock-card" id="card-${t.sym.replace('.','_')}">
@@ -1499,30 +1507,32 @@ async function fetchAllData() {
       });
     }
 
-    // Fetch live data for all tickers in parallel — ONLY indicator+price data, no history
-    await Promise.all(TICKERS.map(async t => {
-      try {
-        const prev = cachedData[t.sym];
-        const fresh = await fetchTicker(t.sym, currentTf);
-        if (fresh) {
-          if (prev?.inds) {
-            processSignals(t.sym, fresh.inds, prev.inds);
-          } else {
-            detectCurrentState(t.sym, fresh.inds);
-          }
-          cachedData[t.sym] = fresh;
-          renderCard(t.sym, t.name, fresh);
-        }
-      } catch(e) {
-        console.warn('Error fetching', t.sym, e);
-      }
-    }));
-
-    // On first load, kick off historical scan in background AFTER live data is done
-    // This never blocks the refresh cycle
     if (isFirstLoad) {
+      // FIRST LOAD: full indicator data for all tickers
+      await Promise.all(TICKERS.map(async t => {
+        try {
+          const fresh = await fetchTicker(t.sym, currentTf);
+          if (fresh) {
+            detectCurrentState(t.sym, fresh.inds);
+            cachedData[t.sym] = fresh;
+            renderCard(t.sym, t.name, fresh);
+          }
+        } catch(e) { console.warn('Error loading', t.sym, e); }
+      }));
       isFirstLoad = false;
+      // Historical scan runs in background — never blocks refresh
       runHistoricalScan();
+    } else {
+      // SUBSEQUENT REFRESHES: price only — fast, no OHLCV
+      await Promise.all(TICKERS.map(async t => {
+        try {
+          const quote = await fetchPrice(t.sym);
+          if (quote && cachedData[t.sym]) {
+            cachedData[t.sym] = { ...cachedData[t.sym], quote };
+            renderCard(t.sym, t.name, cachedData[t.sym]);
+          }
+        } catch(e) { console.warn('Error updating price', t.sym, e); }
+      }));
     }
 
   } finally {

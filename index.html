@@ -961,15 +961,16 @@ function updateMarketStatus() {
 // YAHOO FINANCE PROXY
 // ============================================================
 async function fetchYahoo(sym, interval, range) {
-  const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=${interval}&range=${range}&includePrePost=false`;
+  const bust = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=${interval}&range=${range}&includePrePost=false&_=${bust}`;
   const proxies = [
     `https://corsproxy.io/?${encodeURIComponent(yahooUrl)}`,
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(yahooUrl)}`,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`,
-    yahooUrl
   ];
   for (const url of proxies) {
     try {
-      const res = await fetch(url, {headers: {'Accept': 'application/json'}});
+      const res = await fetch(url, {cache: 'no-store', headers: {'Cache-Control': 'no-cache', 'Pragma': 'no-cache'}});
       if (!res.ok) continue;
       const json = await res.json();
       const result = json?.chart?.result?.[0];
@@ -1007,14 +1008,13 @@ function extractOHLCV(result) {
 function getCurrentQuote(result) {
   if (!result) return null;
   const meta = result.meta;
-  // regularMarketPrice is always current regardless of interval/range requested
-  const price = meta.regularMarketPrice ?? meta.previousClose;
-  const prevClose = meta.chartPreviousClose ?? meta.previousClose ?? price;
+  const price = meta?.regularMarketPrice ?? meta?.previousClose;
+  const prevClose = meta?.chartPreviousClose ?? meta?.previousClose ?? price;
   return {
     price,
     prevClose,
-    currency: meta.currency || 'USD',
-    name: meta.longName || meta.shortName || ''
+    currency: meta?.currency || 'USD',
+    name: meta?.longName || meta?.shortName || ''
   };
 }
 

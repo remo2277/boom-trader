@@ -1352,15 +1352,22 @@ function scanHistoricalSignals(sym, data, series) {
     // Chaikin crosses above +40 → arm system (re-arm even if already in a state)
     if (chaikinCrossedAbove(b)) {
       scanState = 'yellow';
+      signalState[sym].state = 'yellow';
       historicalAlerts.push({ sym, level:'yellow', msg:`Chaikin crossed +${CHAIKIN_TRIGGER} at bar close`, time:timeStr, historical:true, ts: ts || 0, tf: currentTf });
+      const d = cachedData[sym];
+      const ticker = TICKERS.find(t => t.sym === sym);
+      if (d && ticker) renderCard(sym, ticker.name, d);
       continue;
     }
 
-    // In yellow state — stay armed regardless of Chaikin, wait for Stochastic
     if (scanState === 'yellow') {
       if (stochConfirmed(b)) {
         scanState = 'green';
+        signalState[sym].state = 'green';
         historicalAlerts.push({ sym, level:'green', msg:`FULL SIGNAL: Stochastic K crossed D below ${STOCH_THRESHOLD} at bar close`, time:timeStr, historical:true, ts: ts || 0, tf: currentTf });
+        const d = cachedData[sym];
+        const ticker = TICKERS.find(t => t.sym === sym);
+        if (d && ticker) renderCard(sym, ticker.name, d);
         scanState = 'none';
       }
     }
@@ -1468,11 +1475,10 @@ async function fetchAllData() {
         if (prev?.inds) {
           processSignals(t.sym, fresh.inds, prev.inds);
         } else {
-          // First load — detect current state from live values
           detectCurrentState(t.sym, fresh.inds);
-          // Historical scan using same timeframe as currently selected
+          // Re-render card immediately if state was set
+          if (signalState[t.sym].state !== 'none') renderCard(t.sym, t.name, fresh);
           const tf = TF_MAP[currentTf];
-          // Use a longer range for history — map each interval to best available range
           const histRanges = { '1m':'7d', '5m':'1mo', '15m':'1mo', '1h':'3mo', '1d':'1y' };
           const histRange = histRanges[currentTf] || '3mo';
           fetchYahoo(t.sym, tf.interval, histRange).then(result => {

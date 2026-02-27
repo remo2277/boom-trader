@@ -1268,60 +1268,39 @@ function stochConfirmed(b) {
     b.stochK > b.stochD && b.prevStochK <= b.prevStochD;
 }
 
-// Live signal processing — called each refresh with latest bar vs previous bar
+// Live signal processing — Chaikin + Stochastic only
 function processSignals(sym, inds, prevInds) {
   if (!inds || !prevInds) return;
   const st = signalState[sym];
 
-  // Build a synthetic bar object from current and previous indicator values
   const b = {
-    cci9:    inds.cci9.val,    cci12: inds.cci12.val,    cci20: inds.cci20.val,
     chaikin: inds.chaikin.val, stochK: inds.stochK.val,  stochD: inds.stochD.val,
-    prevCci9:    prevInds.cci9.val,    prevCci12: prevInds.cci12.val,    prevCci20: prevInds.cci20.val,
-    prevChaikin: prevInds.chaikin.val, prevStochK: prevInds.stochK.val,  prevStochD: prevInds.stochD.val,
+    prevChaikin: prevInds.chaikin.val, prevStochK: prevInds.stochK.val, prevStochD: prevInds.stochD.val,
   };
 
-  // CCI crossed below at bar close → reset sequence
-  if (cciCrossedBelow(b)) {
+  // Chaikin crosses above +40 → arm system (yellow)
+  // Only trigger on fresh cross — if already armed, ignore
+  if (chaikinCrossedAbove(b) && st.state === 'none') {
     st.state = 'yellow';
-    fireAlert(sym, 'yellow', `CCI all periods crossed below ${CCI_TRIGGER} at bar close`);
-    // Chaikin already above? Skip to blue immediately
-    if (chaikinAbove(b)) {
-      st.state = 'blue';
-      fireAlert(sym, 'blue', `Chaikin already above ${CHAIKIN_TRIGGER} — watching Stochastic`);
-    }
+    fireAlert(sym, 'yellow', `Chaikin crossed +${CHAIKIN_TRIGGER} at bar close — watching Stochastic`);
     return;
   }
 
-  if (st.state === 'yellow' && chaikinCrossedAbove(b)) {
-    st.state = 'blue';
-    fireAlert(sym, 'blue', `Chaikin crossed +${CHAIKIN_TRIGGER} at bar close — watching Stochastic`);
-  }
-
-  if (st.state === 'blue' && stochConfirmed(b)) {
+  // While armed, wait for Stochastic confirmation regardless of where Chaikin is now
+  if (st.state === 'yellow' && stochConfirmed(b)) {
     st.state = 'green';
     fireAlert(sym, 'green', `FULL SIGNAL: Stochastic K crossed D below ${STOCH_THRESHOLD} at bar close`);
   }
 }
 
-// Option B: Detect current live state on first load from latest bar
+// Option B: Detect current live state on first load
 function detectCurrentState(sym, inds) {
   if (!inds) return;
   const st = signalState[sym];
   if (st.state !== 'none') return;
-
-  const cciBelow = inds.cci9.val !== null && inds.cci9.val < CCI_TRIGGER &&
-                   inds.cci12.val !== null && inds.cci12.val < CCI_TRIGGER &&
-                   inds.cci20.val !== null && inds.cci20.val < CCI_TRIGGER;
-  if (!cciBelow) return;
-
-  st.state = 'yellow';
+  // If Chaikin currently above +40, conservatively arm to yellow
   if (inds.chaikin.val !== null && inds.chaikin.val >= CHAIKIN_TRIGGER) {
-    st.state = 'blue';
-    const kBelow = inds.stochK.val !== null && inds.stochK.val < STOCH_THRESHOLD;
-    const dBelow = inds.stochD.val !== null && inds.stochD.val < STOCH_THRESHOLD;
-    const kAboveD = inds.stochK.val !== null && inds.stochD.val !== null && inds.stochK.val > inds.stochD.val;
-    if (kBelow && dBelow && kAboveD) st.state = 'green';
+    st.state = 'yellow';
   }
 }
 
@@ -1341,26 +1320,20 @@ function scanHistoricalSignals(sym, data, series) {
       ? new Date(ts).toLocaleString('en-US', {month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit'})
       : 'Historical';
 
-    // CCI crossed below at bar close → reset
-    if (cciCrossedBelow(b)) {
+    // Chaikin crosses above +40 → arm system (only if not already armed)
+    if (chaikinCrossedAbove(b) && scanState === 'none') {
       scanState = 'yellow';
-      historicalAlerts.push({ sym, level:'yellow', msg:`CCI all periods crossed below ${CCI_TRIGGER} at bar close`, time:timeStr, historical:true, ts: ts || 0 });
-      if (chaikinAbove(b)) {
-        scanState = 'blue';
-        historicalAlerts.push({ sym, level:'blue', msg:`Chaikin already above ${CHAIKIN_TRIGGER} at same bar`, time:timeStr, historical:true, ts: ts || 0 });
-      }
+      historicalAlerts.push({ sym, level:'yellow', msg:`Chaikin crossed +${CHAIKIN_TRIGGER} at bar close`, time:timeStr, historical:true, ts: ts || 0 });
       continue;
     }
 
-    if (scanState === 'yellow' && chaikinCrossedAbove(b)) {
-      scanState = 'blue';
-      historicalAlerts.push({ sym, level:'blue', msg:`Chaikin crossed +${CHAIKIN_TRIGGER} at bar close`, time:timeStr, historical:true, ts: ts || 0 });
-    }
-
-    if (scanState === 'blue' && stochConfirmed(b)) {
-      scanState = 'green';
-      historicalAlerts.push({ sym, level:'green', msg:`FULL SIGNAL: Stochastic K crossed D below ${STOCH_THRESHOLD} at bar close`, time:timeStr, historical:true, ts: ts || 0 });
-      scanState = 'none';
+    // In yellow state — stay armed regardless of Chaikin, wait for Stochastic
+    if (scanState === 'yellow') {
+      if (stochConfirmed(b)) {
+        scanState = 'green';
+        historicalAlerts.push({ sym, level:'green', msg:`FULL SIGNAL: Stochastic K crossed D below ${STOCH_THRESHOLD} at bar close`, time:timeStr, historical:true, ts: ts || 0 });
+        scanState = 'none';
+      }
     }
   }
 

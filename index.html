@@ -1290,6 +1290,21 @@ function processSignals(sym, inds, prevInds) {
   if (st.state === 'yellow' && stochConfirmed(b)) {
     st.state = 'green';
     fireAlert(sym, 'green', `FULL SIGNAL: Stochastic K crossed D below ${STOCH_THRESHOLD} at bar close`);
+    // Reset timer matches the selected timeframe
+    const resetTimes = {
+      '1m':  1 * 60 * 1000,        // 1 minute
+      '5m':  5 * 60 * 1000,        // 5 minutes
+      '15m': 15 * 60 * 1000,       // 15 minutes
+      '1h':  60 * 60 * 1000,       // 1 hour
+      '1d':  24 * 60 * 60 * 1000   // 1 day
+    };
+    const delay = resetTimes[currentTf] || 5 * 60 * 1000;
+    setTimeout(() => {
+      signalState[sym].state = 'none';
+      const d = cachedData[sym];
+      const ticker = TICKERS.find(t => t.sym === sym);
+      if (d && ticker) renderCard(sym, ticker.name, d);
+    }, delay);
   }
 }
 
@@ -1877,7 +1892,7 @@ function renderAlerts() {
   }
   const colors = { yellow: 'var(--yellow)', blue: 'var(--blue)', green: 'var(--green)' };
   // Sort newest first by timestamp
-  const sorted = [...alertLog].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  const sorted = [...alertLog].filter(a => a.sym !== 'BTC-USD').sort((a, b) => (b.ts || 0) - (a.ts || 0));
   el.innerHTML = sorted.slice(0, 100).map(a => `
     <div class="alert-item" style="${a.historical ? 'opacity:0.6' : ''}">
       <div class="alert-dot" style="background:${colors[a.level]||'var(--text3)'};box-shadow:0 0 6px ${colors[a.level]||'transparent'}"></div>

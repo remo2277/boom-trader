@@ -1381,9 +1381,12 @@ function fireAlert(sym, level, msg) {
 
 function updateAlertBadge() {
   const badge = document.getElementById('alertBadge');
-  if (alertLog.length > 0) {
-    badge.textContent = alertLog.length > 99 ? '99+' : alertLog.length;
+  const count = alertLog.filter(a => a.sym !== 'BTC-USD' && a.tf === currentTf).length;
+  if (count > 0) {
+    badge.textContent = count > 99 ? '99+' : count;
     badge.style.display = 'inline';
+  } else {
+    badge.style.display = 'none';
   }
 }
 
@@ -1936,6 +1939,7 @@ document.getElementById('tfSelector').addEventListener('click', e => {
   btn.classList.add('active');
   currentTf = btn.dataset.tf;
   renderAlerts();
+  updateAlertBadge();
   fetchAllData();
 });
 

@@ -779,7 +779,7 @@
       </div>
       <div class="settings-row">
         <span class="settings-label">Refresh Interval</span>
-        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent)">60 sec</span>
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent)">5 sec</span>
       </div>
       <div class="settings-row">
         <span class="settings-label">BTC Monitoring</span>
@@ -931,6 +931,8 @@ let currentTf = '1m';
 let currentModalTicker = null;
 let currentModalTf = '1m';
 let refreshTimer = null;
+let isFirstLoad = true;
+let isFetching = false;
 
 // Thresholds (can be overridden by settings)
 let CCI_TRIGGER = -100;
@@ -1469,6 +1471,8 @@ async function fetchTicker(sym, tf) {
 }
 
 async function fetchAllData() {
+  if (isFetching) return; // skip if previous fetch still running
+  isFetching = true;
   updateMarketStatus();
   document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
 
@@ -1515,25 +1519,30 @@ async function fetchAllData() {
         if (prev?.inds) {
           processSignals(t.sym, fresh.inds, prev.inds);
         } else {
+          // First load only — detect current state and run historical scan
           detectCurrentState(t.sym, fresh.inds);
-          // Re-render card immediately if state was set
-          if (signalState[t.sym].state !== 'none') renderCard(t.sym, t.name, fresh);
-          const tf = TF_MAP[currentTf];
-          const histRanges = { '1m':'7d', '5m':'1mo', '15m':'1mo', '1h':'3mo', '1d':'1y' };
-          const histRange = histRanges[currentTf] || '3mo';
-          fetchYahoo(t.sym, tf.interval, histRange).then(result => {
-            const histData = extractOHLCV(result);
-            if (histData && histData.length > 30) {
-              const series = computeFullSeries(histData);
-              scanHistoricalSignals(t.sym, histData, series);
-            }
-          });
+          if (getSignalState(t.sym).state !== 'none') renderCard(t.sym, t.name, fresh);
+          if (isFirstLoad) {
+            const tf = TF_MAP[currentTf];
+            const histRanges = { '1m':'7d', '5m':'60d', '15m':'60d', '1h':'2y', '1d':'2y' };
+            const histRange = histRanges[currentTf] || '1y';
+            fetchYahoo(t.sym, tf.interval, histRange).then(result => {
+              const histData = extractOHLCV(result);
+              if (histData && histData.length > 30) {
+                const series = computeFullSeries(histData);
+                scanHistoricalSignals(t.sym, histData, series);
+              }
+            });
+          }
         }
         cachedData[t.sym] = fresh;
         renderCard(t.sym, t.name, fresh);
       }
     }));
   }
+
+  isFirstLoad = false;
+  isFetching = false;
 }
 
 function renderCard(sym, name, d) {
@@ -2002,6 +2011,7 @@ document.getElementById('tfSelector').addEventListener('click', e => {
   document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   currentTf = btn.dataset.tf;
+  isFirstLoad = true;
   // Reset all card visuals to reflect new timeframe states
   TICKERS.forEach(t => {
     const d = cachedData[t.sym];

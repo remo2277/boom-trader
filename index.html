@@ -1345,8 +1345,8 @@ function scanHistoricalSignals(sym, data, series) {
     // Never alert on BTC
     if (sym === 'BTC-USD') continue;
 
-    // Only process bars during market hours
-    if (sym !== 'BTC-USD') {
+    // Only process bars during market hours for intraday — daily bars are always valid
+    if (sym !== 'BTC-USD' && currentTf !== '1d') {
       const barDate = new Date(ts);
       const etStr = barDate.toLocaleString('en-US', {timeZone: 'America/New_York'});
       const et = new Date(etStr);
@@ -1354,6 +1354,13 @@ function scanHistoricalSignals(sym, data, series) {
       const mins = et.getHours() * 60 + et.getMinutes();
       if (day === 0 || day === 6) continue;
       if (mins < 570 || mins >= 960) continue;
+    }
+
+    // For daily bars still skip weekends
+    if (currentTf === '1d') {
+      const barDate = new Date(ts);
+      const et = new Date(barDate.toLocaleString('en-US', {timeZone: 'America/New_York'}));
+      if (et.getDay() === 0 || et.getDay() === 6) continue;
     }
 
     const timeStr = new Date(ts).toLocaleString('en-US', {month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit'});

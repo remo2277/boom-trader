@@ -1338,7 +1338,7 @@ function scanHistoricalSignals(sym, data, series) {
     // Chaikin crosses above +40 → arm system (only if not already armed)
     if (chaikinCrossedAbove(b) && scanState === 'none') {
       scanState = 'yellow';
-      historicalAlerts.push({ sym, level:'yellow', msg:`Chaikin crossed +${CHAIKIN_TRIGGER} at bar close`, time:timeStr, historical:true, ts: ts || 0 });
+      historicalAlerts.push({ sym, level:'yellow', msg:`Chaikin crossed +${CHAIKIN_TRIGGER} at bar close`, time:timeStr, historical:true, ts: ts || 0, tf: currentTf });
       continue;
     }
 
@@ -1346,7 +1346,7 @@ function scanHistoricalSignals(sym, data, series) {
     if (scanState === 'yellow') {
       if (stochConfirmed(b)) {
         scanState = 'green';
-        historicalAlerts.push({ sym, level:'green', msg:`FULL SIGNAL: Stochastic K crossed D below ${STOCH_THRESHOLD} at bar close`, time:timeStr, historical:true, ts: ts || 0 });
+        historicalAlerts.push({ sym, level:'green', msg:`FULL SIGNAL: Stochastic K crossed D below ${STOCH_THRESHOLD} at bar close`, time:timeStr, historical:true, ts: ts || 0, tf: currentTf });
         scanState = 'none';
       }
     }
@@ -1367,7 +1367,7 @@ function buildIndsHistory(data) {
 function fireAlert(sym, level, msg) {
   const now = new Date();
   const timeStr = now.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
-  alertLog.unshift({ sym, level, msg, time: timeStr, ts: now.getTime() });
+  alertLog.unshift({ sym, level, msg, time: timeStr, ts: now.getTime(), tf: currentTf });
 
   // Browser notification
   if (level !== 'none' && 'Notification' in window && Notification.permission === 'granted') {
@@ -1892,7 +1892,9 @@ function renderAlerts() {
   }
   const colors = { yellow: 'var(--yellow)', blue: 'var(--blue)', green: 'var(--green)' };
   // Sort newest first by timestamp
-  const sorted = [...alertLog].filter(a => a.sym !== 'BTC-USD').sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  const sorted = [...alertLog]
+    .filter(a => a.sym !== 'BTC-USD' && a.tf === currentTf)
+    .sort((a, b) => (b.ts || 0) - (a.ts || 0));
   el.innerHTML = sorted.slice(0, 100).map(a => `
     <div class="alert-item" style="${a.historical ? 'opacity:0.6' : ''}">
       <div class="alert-dot" style="background:${colors[a.level]||'var(--text3)'};box-shadow:0 0 6px ${colors[a.level]||'transparent'}"></div>
@@ -1916,6 +1918,12 @@ function switchPage(page) {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById(`page${page.charAt(0).toUpperCase()+page.slice(1)}`).classList.add('active');
   document.getElementById(`nav${page.charAt(0).toUpperCase()+page.slice(1)}`).classList.add('active');
+  // Clear badge when alerts tab is opened
+  if (page === 'alerts') {
+    const badge = document.getElementById('alertBadge');
+    badge.style.display = 'none';
+    badge.textContent = '0';
+  }
 }
 
 // ============================================================
@@ -1927,6 +1935,7 @@ document.getElementById('tfSelector').addEventListener('click', e => {
   document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   currentTf = btn.dataset.tf;
+  renderAlerts();
   fetchAllData();
 });
 

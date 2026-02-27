@@ -901,11 +901,24 @@ const TF_RANGES = {
 
 let currentModalRange = null;
 
-// Signal state per ticker
+// Signal state per ticker per timeframe
 const signalState = {};
 TICKERS.forEach(t => {
-  signalState[t.sym] = { state: 'none' }; // none, yellow, blue, green
+  signalState[t.sym] = {};
+  Object.keys(TF_MAP).forEach(tf => {
+    signalState[t.sym][tf] = { state: 'none' };
+  });
 });
+
+function getSignalState(sym) {
+  return signalState[sym]?.[currentTf] || { state: 'none' };
+}
+
+function setSignalState(sym, tf, state) {
+  if (!signalState[sym]) signalState[sym] = {};
+  if (!signalState[sym][tf]) signalState[sym][tf] = { state: 'none' };
+  signalState[sym][tf].state = state;
+}
 
 // Alerts log
 const alertLog = [];
@@ -1272,35 +1285,32 @@ function stochConfirmed(b) {
 // Live signal processing — Chaikin + Stochastic only
 function processSignals(sym, inds, prevInds) {
   if (!inds || !prevInds) return;
-  const st = signalState[sym];
+  const st = signalState[sym][currentTf];
 
   const b = {
     chaikin: inds.chaikin.val, stochK: inds.stochK.val,  stochD: inds.stochD.val,
     prevChaikin: prevInds.chaikin.val, prevStochK: prevInds.stochK.val, prevStochD: prevInds.stochD.val,
   };
 
-  // Chaikin crosses above +40 → arm system (re-arm on every fresh cross)
   if (chaikinCrossedAbove(b)) {
     st.state = 'yellow';
     fireAlert(sym, 'yellow', `Chaikin crossed +${CHAIKIN_TRIGGER} at bar close — watching Stochastic`);
     return;
   }
 
-  // While armed, wait for Stochastic confirmation regardless of where Chaikin is now
   if (st.state === 'yellow' && stochConfirmed(b)) {
     st.state = 'green';
     fireAlert(sym, 'green', `FULL SIGNAL: Stochastic K crossed D below ${STOCH_THRESHOLD} at bar close`);
-    // Reset timer matches the selected timeframe
     const resetTimes = {
-      '1m':  1 * 60 * 1000,        // 1 minute
-      '5m':  5 * 60 * 1000,        // 5 minutes
-      '15m': 15 * 60 * 1000,       // 15 minutes
-      '1h':  60 * 60 * 1000,       // 1 hour
-      '1d':  24 * 60 * 60 * 1000   // 1 day
+      '1m':  1 * 60 * 1000,
+      '5m':  5 * 60 * 1000,
+      '15m': 15 * 60 * 1000,
+      '1h':  60 * 60 * 1000,
+      '1d':  24 * 60 * 60 * 1000
     };
     const delay = resetTimes[currentTf] || 5 * 60 * 1000;
     setTimeout(() => {
-      signalState[sym].state = 'none';
+      setSignalState(sym, currentTf, 'none');
       const d = cachedData[sym];
       const ticker = TICKERS.find(t => t.sym === sym);
       if (d && ticker) renderCard(sym, ticker.name, d);
@@ -1311,9 +1321,8 @@ function processSignals(sym, inds, prevInds) {
 // Option B: Detect current live state on first load
 function detectCurrentState(sym, inds) {
   if (!inds) return;
-  const st = signalState[sym];
+  const st = signalState[sym][currentTf];
   if (st.state !== 'none') return;
-  // If Chaikin currently above +40, conservatively arm to yellow
   if (inds.chaikin.val !== null && inds.chaikin.val >= CHAIKIN_TRIGGER) {
     st.state = 'yellow';
   }
@@ -1352,7 +1361,7 @@ function scanHistoricalSignals(sym, data, series) {
     // Chaikin crosses above +40 → arm system (re-arm even if already in a state)
     if (chaikinCrossedAbove(b)) {
       scanState = 'yellow';
-      signalState[sym].state = 'yellow';
+      setSignalState(sym, currentTf, 'yellow');
       historicalAlerts.push({ sym, level:'yellow', msg:`Chaikin crossed +${CHAIKIN_TRIGGER} at bar close`, time:timeStr, historical:true, ts: ts || 0, tf: currentTf });
       const d = cachedData[sym];
       const ticker = TICKERS.find(t => t.sym === sym);
@@ -1363,7 +1372,7 @@ function scanHistoricalSignals(sym, data, series) {
     if (scanState === 'yellow') {
       if (stochConfirmed(b)) {
         scanState = 'green';
-        signalState[sym].state = 'green';
+        setSignalState(sym, currentTf, 'green');
         historicalAlerts.push({ sym, level:'green', msg:`FULL SIGNAL: Stochastic K crossed D below ${STOCH_THRESHOLD} at bar close`, time:timeStr, historical:true, ts: ts || 0, tf: currentTf });
         const d = cachedData[sym];
         const ticker = TICKERS.find(t => t.sym === sym);
@@ -1501,7 +1510,7 @@ function renderCard(sym, name, d) {
   const card = document.getElementById(`card-${id}`);
   if (!card) return;
 
-  const st = signalState[sym];
+  const st = getSignalState(sym);
   card.className = 'stock-card' + (st.state !== 'none' ? ` signal-${st.state}` : '');
 
   const badge = document.getElementById(`badge-${id}`);
@@ -1962,6 +1971,11 @@ document.getElementById('tfSelector').addEventListener('click', e => {
   document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   currentTf = btn.dataset.tf;
+  // Reset all card visuals to reflect new timeframe states
+  TICKERS.forEach(t => {
+    const d = cachedData[t.sym];
+    if (d) renderCard(t.sym, t.name, d);
+  });
   renderAlerts();
   updateAlertBadge();
   fetchAllData();

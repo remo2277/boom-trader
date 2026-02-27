@@ -1183,89 +1183,187 @@ function computeIndicators(data) {
 // SIGNAL ENGINE
 // ============================================================
 
-// Option B: Detect current state on load based on current values
+// ============================================================
+// SIGNAL ENGINE — BAR CLOSE ACCURATE
+// ============================================================
+
+// Compute full indicator series from complete dataset in one pass
+// This is the correct approach — calculate on full data then read values at each bar
+function computeFullSeries(data) {
+  if (!data || data.length < 30) return null;
+  const closes = data.map(d => d.c);
+  return {
+    cci9:    calcCCI(data, 9),
+    cci12:   calcCCI(data, 12),
+    cci20:   calcCCI(data, 20),
+    chaikin: calcChaikinVol(data, 10, 10),
+    stochK:  calcStoch(data, 10, 5, 2).k,
+    stochD:  calcStoch(data, 10, 5, 2).d,
+    lrs:     calcLRS(closes, 10),
+    rsi9:    calcRSI(closes, 9),
+    rsi20:   calcRSI(closes, 20),
+    len:     data.length
+  };
+}
+
+// Evaluate signal conditions at a specific bar index using pre-computed series
+function evalBarSignal(series, i) {
+  if (i < 1) return null;
+  const get = (arr, idx) => (arr && arr[idx] != null) ? arr[idx] : null;
+
+  return {
+    // Current bar values
+    cci9:    get(series.cci9, i),
+    cci12:   get(series.cci12, i),
+    cci20:   get(series.cci20, i),
+    chaikin: get(series.chaikin, i),
+    stochK:  get(series.stochK, i),
+    stochD:  get(series.stochD, i),
+    // Previous bar values for crossover detection
+    prevCci9:    get(series.cci9, i-1),
+    prevCci12:   get(series.cci12, i-1),
+    prevCci20:   get(series.cci20, i-1),
+    prevChaikin: get(series.chaikin, i-1),
+    prevStochK:  get(series.stochK, i-1),
+    prevStochD:  get(series.stochD, i-1),
+  };
+}
+
+// Check if CCI crossed below trigger at this bar (bar close)
+function cciCrossedBelow(b) {
+  if (!b) return false;
+  const curBelow  = b.cci9 !== null && b.cci9 < CCI_TRIGGER &&
+                    b.cci12 !== null && b.cci12 < CCI_TRIGGER &&
+                    b.cci20 !== null && b.cci20 < CCI_TRIGGER;
+  const prevBelow = b.prevCci9 !== null && b.prevCci9 < CCI_TRIGGER &&
+                    b.prevCci12 !== null && b.prevCci12 < CCI_TRIGGER &&
+                    b.prevCci20 !== null && b.prevCci20 < CCI_TRIGGER;
+  return curBelow && !prevBelow;
+}
+
+// Check if all CCI currently below trigger
+function cciAllBelow(b) {
+  return b && b.cci9 !== null && b.cci9 < CCI_TRIGGER &&
+              b.cci12 !== null && b.cci12 < CCI_TRIGGER &&
+              b.cci20 !== null && b.cci20 < CCI_TRIGGER;
+}
+
+// Check if Chaikin crossed above trigger at this bar
+function chaikinCrossedAbove(b) {
+  return b && b.chaikin !== null && b.chaikin >= CHAIKIN_TRIGGER &&
+              b.prevChaikin !== null && b.prevChaikin < CHAIKIN_TRIGGER;
+}
+
+// Check if Chaikin currently above trigger
+function chaikinAbove(b) {
+  return b && b.chaikin !== null && b.chaikin >= CHAIKIN_TRIGGER;
+}
+
+// Check if Stochastic confirmed at this bar (both below threshold, K crossed above D)
+function stochConfirmed(b) {
+  return b &&
+    b.stochK !== null && b.stochK < STOCH_THRESHOLD &&
+    b.stochD !== null && b.stochD < STOCH_THRESHOLD &&
+    b.prevStochK !== null && b.prevStochD !== null &&
+    b.stochK > b.stochD && b.prevStochK <= b.prevStochD;
+}
+
+// Live signal processing — called each refresh with latest bar vs previous bar
+function processSignals(sym, inds, prevInds) {
+  if (!inds || !prevInds) return;
+  const st = signalState[sym];
+
+  // Build a synthetic bar object from current and previous indicator values
+  const b = {
+    cci9:    inds.cci9.val,    cci12: inds.cci12.val,    cci20: inds.cci20.val,
+    chaikin: inds.chaikin.val, stochK: inds.stochK.val,  stochD: inds.stochD.val,
+    prevCci9:    prevInds.cci9.val,    prevCci12: prevInds.cci12.val,    prevCci20: prevInds.cci20.val,
+    prevChaikin: prevInds.chaikin.val, prevStochK: prevInds.stochK.val,  prevStochD: prevInds.stochD.val,
+  };
+
+  // CCI crossed below at bar close → reset sequence
+  if (cciCrossedBelow(b)) {
+    st.state = 'yellow';
+    fireAlert(sym, 'yellow', `CCI all periods crossed below ${CCI_TRIGGER} at bar close`);
+    // Chaikin already above? Skip to blue immediately
+    if (chaikinAbove(b)) {
+      st.state = 'blue';
+      fireAlert(sym, 'blue', `Chaikin already above ${CHAIKIN_TRIGGER} — watching Stochastic`);
+    }
+    return;
+  }
+
+  if (st.state === 'yellow' && chaikinCrossedAbove(b)) {
+    st.state = 'blue';
+    fireAlert(sym, 'blue', `Chaikin crossed +${CHAIKIN_TRIGGER} at bar close — watching Stochastic`);
+  }
+
+  if (st.state === 'blue' && stochConfirmed(b)) {
+    st.state = 'green';
+    fireAlert(sym, 'green', `FULL SIGNAL: Stochastic K crossed D below ${STOCH_THRESHOLD} at bar close`);
+  }
+}
+
+// Option B: Detect current live state on first load from latest bar
 function detectCurrentState(sym, inds) {
   if (!inds) return;
   const st = signalState[sym];
-  if (st.state !== 'none') return; // already has a state, don't overwrite
+  if (st.state !== 'none') return;
 
   const cciBelow = inds.cci9.val !== null && inds.cci9.val < CCI_TRIGGER &&
                    inds.cci12.val !== null && inds.cci12.val < CCI_TRIGGER &&
                    inds.cci20.val !== null && inds.cci20.val < CCI_TRIGGER;
+  if (!cciBelow) return;
 
-  if (!cciBelow) return; // CCI not triggered, nothing to do
-
-  // CCI is currently below trigger — at minimum yellow
   st.state = 'yellow';
-
-  const chaikinAbove = inds.chaikin.val !== null && inds.chaikin.val >= CHAIKIN_TRIGGER;
-
-  if (chaikinAbove) {
-    // At minimum blue
+  if (inds.chaikin.val !== null && inds.chaikin.val >= CHAIKIN_TRIGGER) {
     st.state = 'blue';
-
     const kBelow = inds.stochK.val !== null && inds.stochK.val < STOCH_THRESHOLD;
     const dBelow = inds.stochD.val !== null && inds.stochD.val < STOCH_THRESHOLD;
     const kAboveD = inds.stochK.val !== null && inds.stochD.val !== null && inds.stochK.val > inds.stochD.val;
-
-    if (kBelow && dBelow && kAboveD) {
-      st.state = 'green';
-    }
+    if (kBelow && dBelow && kAboveD) st.state = 'green';
   }
 }
 
-// Option A: Scan historical data bar by bar to find past signals
-function scanHistoricalSignals(sym, data, indsHistory) {
-  if (!indsHistory || indsHistory.length < 2) return;
-
+// Option A: Historical scan — bar close accurate using full pre-computed series
+function scanHistoricalSignals(sym, data, series) {
+  if (!series || data.length < 30) return;
   const historicalAlerts = [];
   let scanState = 'none';
+  const warmup = 25; // skip first bars while indicators warm up
 
-  for (let i = 1; i < indsHistory.length; i++) {
-    const cur = indsHistory[i];
-    const prev = indsHistory[i - 1];
-    if (!cur || !prev) continue;
+  for (let i = warmup; i < series.len; i++) {
+    const b = evalBarSignal(series, i);
+    if (!b) continue;
 
-    const cciBelow = cur.cci9 < CCI_TRIGGER && cur.cci12 < CCI_TRIGGER && cur.cci20 < CCI_TRIGGER;
-    const prevCciBelow = prev.cci9 < CCI_TRIGGER && prev.cci12 < CCI_TRIGGER && prev.cci20 < CCI_TRIGGER;
+    const ts = data[i]?.t;
+    const timeStr = ts
+      ? new Date(ts).toLocaleString('en-US', {month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit'})
+      : 'Historical';
 
-    // CCI crosses below — reset
-    if (cciBelow && !prevCciBelow) {
+    // CCI crossed below at bar close → reset
+    if (cciCrossedBelow(b)) {
       scanState = 'yellow';
-      const ts = data[i]?.t;
-      const timeStr = ts ? new Date(ts).toLocaleString('en-US', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : 'Historical';
-      historicalAlerts.push({ sym, level: 'yellow', msg: `CCI all periods crossed below ${CCI_TRIGGER}`, time: timeStr, historical: true });
-
-      if (cur.chaikin >= CHAIKIN_TRIGGER) {
+      historicalAlerts.push({ sym, level:'yellow', msg:`CCI all periods crossed below ${CCI_TRIGGER} at bar close`, time:timeStr, historical:true, ts: ts || 0 });
+      if (chaikinAbove(b)) {
         scanState = 'blue';
-        historicalAlerts.push({ sym, level: 'blue', msg: `Chaikin already above ${CHAIKIN_TRIGGER}`, time: timeStr, historical: true });
+        historicalAlerts.push({ sym, level:'blue', msg:`Chaikin already above ${CHAIKIN_TRIGGER} at same bar`, time:timeStr, historical:true, ts: ts || 0 });
       }
       continue;
     }
 
-    if (scanState === 'yellow') {
-      if (cur.chaikin >= CHAIKIN_TRIGGER && prev.chaikin < CHAIKIN_TRIGGER) {
-        scanState = 'blue';
-        const ts = data[i]?.t;
-        const timeStr = ts ? new Date(ts).toLocaleString('en-US', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : 'Historical';
-        historicalAlerts.push({ sym, level: 'blue', msg: `Chaikin crossed +${CHAIKIN_TRIGGER}`, time: timeStr, historical: true });
-      }
+    if (scanState === 'yellow' && chaikinCrossedAbove(b)) {
+      scanState = 'blue';
+      historicalAlerts.push({ sym, level:'blue', msg:`Chaikin crossed +${CHAIKIN_TRIGGER} at bar close`, time:timeStr, historical:true, ts: ts || 0 });
     }
 
-    if (scanState === 'blue') {
-      const kBelow = cur.stochK < STOCH_THRESHOLD;
-      const dBelow = cur.stochD < STOCH_THRESHOLD;
-      const kCrossD = cur.stochK > cur.stochD && prev.stochK <= prev.stochD;
-      if (kBelow && dBelow && kCrossD) {
-        scanState = 'green';
-        const ts = data[i]?.t;
-        const timeStr = ts ? new Date(ts).toLocaleString('en-US', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : 'Historical';
-        historicalAlerts.push({ sym, level: 'green', msg: `FULL SIGNAL: Stochastic K crossed D below ${STOCH_THRESHOLD}`, time: timeStr, historical: true });
-      }
+    if (scanState === 'blue' && stochConfirmed(b)) {
+      scanState = 'green';
+      historicalAlerts.push({ sym, level:'green', msg:`FULL SIGNAL: Stochastic K crossed D below ${STOCH_THRESHOLD} at bar close`, time:timeStr, historical:true, ts: ts || 0 });
+      scanState = 'none';
     }
   }
 
-  // Add historical alerts to log (oldest first, don't duplicate)
   if (historicalAlerts.length > 0) {
     alertLog.push(...historicalAlerts.reverse());
     updateAlertBadge();
@@ -1273,86 +1371,15 @@ function scanHistoricalSignals(sym, data, indsHistory) {
   }
 }
 
-// Build per-bar indicator history from full dataset for historical scan
+// Build full indicator series from complete dataset (single pass — correct approach)
 function buildIndsHistory(data) {
-  const history = [];
-  for (let i = 20; i < data.length; i++) {
-    const slice = data.slice(0, i + 1);
-    const closes = slice.map(d => d.c);
-    const cci9 = calcCCI(slice, 9);
-    const cci12 = calcCCI(slice, 12);
-    const cci20 = calcCCI(slice, 20);
-    const chaikin = calcChaikinVol(slice, 10, 10);
-    const stoch = calcStoch(slice, 10, 5, 2);
-    const last = slice.length - 1;
-    history.push({
-      cci9: cci9[last],
-      cci12: cci12[last],
-      cci20: cci20[last],
-      chaikin: chaikin[last],
-      stochK: stoch.k[last],
-      stochD: stoch.d[last]
-    });
-  }
-  return history;
-}
-
-function processSignals(sym, inds, prevInds) {
-  if (!inds) return;
-  const st = signalState[sym];
-
-  const cciBelow = (inds.cci9.val !== null && inds.cci9.val < CCI_TRIGGER) &&
-                   (inds.cci12.val !== null && inds.cci12.val < CCI_TRIGGER) &&
-                   (inds.cci20.val !== null && inds.cci20.val < CCI_TRIGGER);
-
-  const prevCciBelow = prevInds ? (
-    (prevInds.cci9.val !== null && prevInds.cci9.val < CCI_TRIGGER) &&
-    (prevInds.cci12.val !== null && prevInds.cci12.val < CCI_TRIGGER) &&
-    (prevInds.cci20.val !== null && prevInds.cci20.val < CCI_TRIGGER)
-  ) : false;
-
-  // CCI crosses below trigger → reset to yellow
-  if (cciBelow && !prevCciBelow) {
-    st.state = 'yellow';
-    fireAlert(sym, 'yellow', `CCI all periods below ${CCI_TRIGGER}`);
-
-    // Check if Chaikin already above trigger
-    if (inds.chaikin.val !== null && inds.chaikin.val >= CHAIKIN_TRIGGER) {
-      st.state = 'blue';
-      fireAlert(sym, 'blue', `Chaikin already above ${CHAIKIN_TRIGGER} — watching Stochastic`);
-    }
-    return;
-  }
-
-  // If in yellow state, watch for Chaikin cross
-  if (st.state === 'yellow') {
-    const chaikinCross = inds.chaikin.val !== null && inds.chaikin.val >= CHAIKIN_TRIGGER &&
-                         (prevInds?.chaikin?.val == null || prevInds.chaikin.val < CHAIKIN_TRIGGER);
-    if (chaikinCross) {
-      st.state = 'blue';
-      fireAlert(sym, 'blue', `Chaikin crossed +${CHAIKIN_TRIGGER} — watching Stochastic`);
-    }
-  }
-
-  // If in blue state, watch for Stochastic confirmation
-  if (st.state === 'blue') {
-    const kBelowThresh = inds.stochK.val !== null && inds.stochK.val < STOCH_THRESHOLD;
-    const dBelowThresh = inds.stochD.val !== null && inds.stochD.val < STOCH_THRESHOLD;
-    const kCrossD = inds.stochK.val !== null && inds.stochD.val !== null &&
-                    inds.stochK.val > inds.stochD.val &&
-                    prevInds?.stochK?.val != null && prevInds.stochD?.val != null &&
-                    prevInds.stochK.val <= prevInds.stochD.val;
-    if (kBelowThresh && dBelowThresh && kCrossD) {
-      st.state = 'green';
-      fireAlert(sym, 'green', `FULL SIGNAL: Stochastic K crossed D below ${STOCH_THRESHOLD}`);
-    }
-  }
+  return computeFullSeries(data);
 }
 
 function fireAlert(sym, level, msg) {
   const now = new Date();
   const timeStr = now.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
-  alertLog.unshift({ sym, level, msg, time: timeStr });
+  alertLog.unshift({ sym, level, msg, time: timeStr, ts: now.getTime() });
 
   // Browser notification
   if (level !== 'none' && 'Notification' in window && Notification.permission === 'granted') {
@@ -1434,12 +1461,16 @@ async function fetchAllData() {
         } else {
           // First load — detect current state from live values
           detectCurrentState(t.sym, fresh.inds);
-          // Also scan history for past signals (use daily data for best history)
-          fetchYahoo(t.sym, '1d', '3mo').then(result => {
+          // Historical scan using same timeframe as currently selected
+          const tf = TF_MAP[currentTf];
+          // Use a longer range for history — map each interval to best available range
+          const histRanges = { '1m':'7d', '5m':'1mo', '15m':'1mo', '1h':'3mo', '1d':'1y' };
+          const histRange = histRanges[currentTf] || '3mo';
+          fetchYahoo(t.sym, tf.interval, histRange).then(result => {
             const histData = extractOHLCV(result);
             if (histData && histData.length > 30) {
-              const indsHistory = buildIndsHistory(histData);
-              scanHistoricalSignals(t.sym, histData, indsHistory);
+              const series = computeFullSeries(histData);
+              scanHistoricalSignals(t.sym, histData, series);
             }
           });
         }
@@ -1872,7 +1903,9 @@ function renderAlerts() {
     return;
   }
   const colors = { yellow: 'var(--yellow)', blue: 'var(--blue)', green: 'var(--green)' };
-  el.innerHTML = alertLog.slice(0, 100).map(a => `
+  // Sort newest first by timestamp
+  const sorted = [...alertLog].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  el.innerHTML = sorted.slice(0, 100).map(a => `
     <div class="alert-item" style="${a.historical ? 'opacity:0.6' : ''}">
       <div class="alert-dot" style="background:${colors[a.level]||'var(--text3)'};box-shadow:0 0 6px ${colors[a.level]||'transparent'}"></div>
       <div class="alert-content">

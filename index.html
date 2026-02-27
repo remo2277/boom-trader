@@ -1652,25 +1652,25 @@ function renderModalIndicators(sym, tf, d) {
       {label:'CCI(9)', val:inds.cci9.val, color:'#ff88aa'},
       {label:'CCI(12)', val:inds.cci12.val, color:'#88aaff'},
       {label:'CCI(20)', val:inds.cci20.val, color:'#88ffcc'}
-    ], inds.data, inds.cci9.series, inds.cci12.series, inds.cci20.series)}
+    ], inds.data, 'cci', inds.cci9.series, inds.cci12.series, inds.cci20.series)}
 
     ${renderIndSection('CHAIKIN VOLATILITY', [
       {label:'ChVol(10,10)', val:inds.chaikin.val, color:'#00d4ff'}
-    ], inds.data)}
+    ], inds.data, 'chaikin')}
 
     ${renderIndSection('STOCHASTIC (10,5,2)', [
       {label:'K%', val:inds.stochK.val, color:'#ff3355'},
       {label:'D%', val:inds.stochD.val, color:'#00ff88'}
-    ], inds.data, inds.stochK.series, inds.stochD.series)}
+    ], inds.data, 'stoch', inds.stochK.series, inds.stochD.series)}
 
     ${renderIndSection('LRS (10)', [
       {label:'LRS', val:inds.lrs.val, color:'#ff88cc'}
-    ], inds.data)}
+    ], inds.data, 'lrs')}
 
     ${renderIndSection('RSI', [
       {label:'RSI(20)', val:inds.rsi20.val, color:'#4488ff'},
       {label:'RSI(9)', val:inds.rsi9.val, color:'#88ffcc'}
-    ], inds.data, inds.rsi20.series, inds.rsi9.series)}
+    ], inds.data, 'rsi', inds.rsi20.series, inds.rsi9.series)}
   `;
 
   // Draw charts after render
@@ -1683,8 +1683,7 @@ function renderModalIndicators(sym, tf, d) {
   });
 }
 
-function renderIndSection(title, chips, data, ...series) {
-  const slug = title.split(' ')[0].toLowerCase();
+function renderIndSection(title, chips, data, chartId, ...series) {
   const chipHtml = chips.map(c => `
     <div class="ind-val-chip">
       <div class="chip-label">${c.label}</div>
@@ -1698,8 +1697,8 @@ function renderIndSection(title, chips, data, ...series) {
       </div>
       <div class="ind-values-row">${chipHtml}</div>
       <div class="chart-container">
-        <canvas class="chart-canvas" id="chart-${slug}" width="400" height="80"></canvas>
-        <div class="chart-tooltip" id="tooltip-${slug}"></div>
+        <canvas class="chart-canvas" id="chart-${chartId}" width="400" height="80"></canvas>
+        <div class="chart-tooltip" id="tooltip-${chartId}"></div>
       </div>
     </div>
   `;

@@ -3,89 +3,135 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AMZN Test</title>
+<title>Price Update Test</title>
 <style>
-  body { background:#050810; color:#c8d8f0; font-family:monospace; padding:20px; }
-  #log { font-size:12px; line-height:1.8; }
-  .price { font-size:32px; color:#00ff88; margin:10px 0; }
-  .time { color:#6a82a8; font-size:11px; }
-  .err { color:#ff3355; }
-  .ok { color:#00ff88; }
+  body { background:#050810; color:#c8d8f0; font-family:monospace; padding:12px; }
+  h2 { color:#00d4ff; font-size:14px; margin-bottom:8px; }
+  #status { color:#ffd700; font-size:11px; margin-bottom:10px; }
+  #grid { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
+  .card { background:#0d1525; border:1px solid #1a2540; border-radius:6px; padding:8px; }
+  .sym { color:#fff; font-size:12px; font-weight:bold; }
+  .price { color:#00ff88; font-size:14px; margin-top:2px; }
+  .chg { font-size:10px; margin-top:1px; }
+  .up { color:#00ff88; } .down { color:#ff3355; }
+  .age { font-size:9px; color:#3a4f72; margin-top:2px; }
+  #log { font-size:10px; margin-top:12px; max-height:150px; overflow-y:auto; }
+  .lok { color:#00ff88; } .lerr { color:#ff3355; } .linfo { color:#6a82a8; }
 </style>
 </head>
 <body>
-<div class="price" id="price">--</div>
-<div class="time" id="lastUpdate">Never updated</div>
+<h2>BOOM TRADER — PRICE UPDATE TEST</h2>
+<div id="status">Initializing...</div>
+<div id="grid"></div>
 <div id="log"></div>
 
 <script>
+const TICKERS = [
+  'AMZN','NVDA','MU','ASML','TSM','AVGO','PLTR','CRWV','AAPL','MSFT',
+  'GOOGL','META','TSLA','NFLX','ORCL','SMCI','RDDT','APP','CRWD',
+  'QQQ','SHOP','SNOW','COIN','TD.TO','CRM','UBER','COST','WMT'
+];
+
+const prices = {};
 let fetchCount = 0;
 let isFetching = false;
+
+// Build grid
+document.getElementById('grid').innerHTML = TICKERS.map(sym => `
+  <div class="card" id="card-${sym.replace('.','_')}">
+    <div class="sym">${sym}</div>
+    <div class="price" id="price-${sym.replace('.','_')}">--</div>
+    <div class="chg" id="chg-${sym.replace('.','_')}">--</div>
+    <div class="age" id="age-${sym.replace('.','_')}">never</div>
+  </div>
+`).join('');
 
 function log(msg, cls) {
   const el = document.getElementById('log');
   const line = document.createElement('div');
-  line.className = cls || '';
+  line.className = cls || 'linfo';
   line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
   el.prepend(line);
-  // Keep only last 20 lines
-  while (el.children.length > 20) el.removeChild(el.lastChild);
+  while (el.children.length > 30) el.removeChild(el.lastChild);
 }
 
-async function fetchAMZN() {
-  if (isFetching) {
-    log('SKIPPED — still fetching', 'err');
-    return;
+async function fetchPrice(sym) {
+  const bust = Date.now();
+  const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=2d&timestamp=${bust}`;
+  const proxies = [
+    `https://corsproxy.io/?${encodeURIComponent(yahooUrl)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`,
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(yahooUrl)}`,
+  ];
+  for (const url of proxies) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const json = await res.json();
+      const meta = json?.chart?.result?.[0]?.meta;
+      if (!meta?.regularMarketPrice) continue;
+      return {
+        price: meta.regularMarketPrice,
+        prevClose: meta.chartPreviousClose ?? meta.previousClose ?? meta.regularMarketPrice
+      };
+    } catch(e) { continue; }
   }
+  return null;
+}
+
+function updateCard(sym, data) {
+  const id = sym.replace('.','_');
+  const priceEl = document.getElementById(`price-${id}`);
+  const chgEl = document.getElementById(`chg-${id}`);
+  const ageEl = document.getElementById(`age-${id}`);
+  if (!priceEl) return;
+
+  const prev = prices[sym];
+  const changed = prev && prev.price !== data.price;
+
+  priceEl.textContent = `$${data.price.toFixed(2)}`;
+  if (changed) {
+    priceEl.style.color = data.price > prev.price ? '#00ff88' : '#ff3355';
+    setTimeout(() => priceEl.style.color = '#00ff88', 1000);
+  }
+
+  const chg = data.prevClose ? ((data.price - data.prevClose) / data.prevClose * 100) : 0;
+  const sign = chg >= 0 ? '+' : '';
+  chgEl.textContent = `${sign}${chg.toFixed(2)}%`;
+  chgEl.className = `chg ${chg >= 0 ? 'up' : 'down'}`;
+  ageEl.textContent = new Date().toLocaleTimeString();
+  prices[sym] = data;
+}
+
+async function fetchAll() {
+  if (isFetching) { log('Skipped — still fetching', 'lerr'); return; }
   isFetching = true;
   fetchCount++;
   const n = fetchCount;
-  log(`Fetch #${n} started`);
+  const start = Date.now();
+  document.getElementById('status').textContent = `Fetching #${n}...`;
 
-  // Cache bust with timestamp
-  const bust = Date.now();
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/AMZN?interval=1m&range=1d&_=${bust}`;
-  
-  const proxies = [
-    `https://corsproxy.io/?${encodeURIComponent(url)}`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
-  ];
-
-  try {
-    for (const proxy of proxies) {
-      try {
-        const start = Date.now();
-        const res = await fetch(proxy, {cache: 'no-store', headers: {'Cache-Control': 'no-cache'}});
-        const elapsed = Date.now() - start;
-        if (!res.ok) { log(`Proxy failed ${res.status}`, 'err'); continue; }
-        const json = await res.json();
-        const meta = json?.chart?.result?.[0]?.meta;
-        const quotes = json?.chart?.result?.[0]?.indicators?.quote?.[0];
-        const lastClose = quotes?.close ? quotes.close.filter(x => x != null).pop() : null;
-        const fields = {
-          regularMarketPrice: meta?.regularMarketPrice,
-          chartPreviousClose: meta?.chartPreviousClose,
-          previousClose: meta?.previousClose,
-          lastOHLCVclose: lastClose,
-        };
-        log(`Fetch #${n} OK in ${elapsed}ms via ${proxy.split('?')[0]}`, 'ok');
-        Object.entries(fields).forEach(([k, v]) => log(`  ${k}: $${v !== undefined ? Number(v).toFixed(2) : 'N/A'}`));
-        document.getElementById('price').textContent = `AMZN $${lastClose?.toFixed(2)}`;
-        document.getElementById('lastUpdate').textContent = `Updated ${new Date().toLocaleTimeString()} — fetch #${n} (${elapsed}ms)`;
-        break;
-      } catch(e) {
-        log(`Proxy error: ${e.message}`, 'err');
-      }
+  let ok = 0, fail = 0;
+  await Promise.all(TICKERS.map(async sym => {
+    const data = await fetchPrice(sym);
+    if (data) {
+      updateCard(sym, data);
+      ok++;
+    } else {
+      fail++;
+      log(`${sym} failed`, 'lerr');
     }
-  } finally {
-    isFetching = false;
-  }
+  }));
+
+  const elapsed = Date.now() - start;
+  isFetching = false;
+  const msg = `Fetch #${n}: ${ok} ok, ${fail} failed — ${elapsed}ms`;
+  document.getElementById('status').textContent = msg;
+  log(msg, fail > 0 ? 'lerr' : 'lok');
 }
 
-// Run immediately then every 5 seconds
-fetchAMZN();
-setInterval(fetchAMZN, 5000);
+fetchAll();
+setInterval(fetchAll, 5000);
 </script>
 </body>
 </html>

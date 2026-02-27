@@ -55,15 +55,27 @@ function log(msg, cls) {
   while (el.children.length > 30) el.removeChild(el.lastChild);
 }
 
-async function fetchPrice(sym) {
+const PROXIES = [
+  url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+  url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+];
+
+let proxyIndex = 0; // rotate which proxy is tried first
+
+async function fetchPrice(sym, tickerIndex) {
   const bust = Date.now();
   const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=2d&timestamp=${bust}`;
-  const proxies = [
-    `https://corsproxy.io/?${encodeURIComponent(yahooUrl)}`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`,
-    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(yahooUrl)}`,
+  
+  // Rotate starting proxy per ticker so load is spread across all proxies
+  const startProxy = (proxyIndex + tickerIndex) % PROXIES.length;
+  const ordered = [
+    PROXIES[startProxy % PROXIES.length](yahooUrl),
+    PROXIES[(startProxy + 1) % PROXIES.length](yahooUrl),
+    PROXIES[(startProxy + 2) % PROXIES.length](yahooUrl),
   ];
-  for (const url of proxies) {
+
+  for (const url of ordered) {
     try {
       const res = await fetch(url);
       if (!res.ok) continue;
@@ -112,16 +124,26 @@ async function fetchAll() {
   document.getElementById('status').textContent = `Fetching #${n}...`;
 
   let ok = 0, fail = 0;
-  await Promise.all(TICKERS.map(async sym => {
-    const data = await fetchPrice(sym);
-    if (data) {
-      updateCard(sym, data);
-      ok++;
-    } else {
-      fail++;
-      log(`${sym} failed`, 'lerr');
-    }
-  }));
+  const BATCH_SIZE = 7; // 7 tickers per batch across 3 proxies = ~2-3 per proxy
+  
+  for (let i = 0; i < TICKERS.length; i += BATCH_SIZE) {
+    const batch = TICKERS.slice(i, i + BATCH_SIZE);
+    await Promise.all(batch.map(async (sym, batchIdx) => {
+      const data = await fetchPrice(sym, i + batchIdx);
+      if (data) {
+        updateCard(sym, data);
+        ok++;
+      } else {
+        fail++;
+        log(`${sym} failed`, 'lerr');
+      }
+    }));
+    // Small pause between batches to avoid rate limiting
+    if (i + BATCH_SIZE < TICKERS.length) await new Promise(r => setTimeout(r, 300));
+  }
+
+  // Rotate proxy starting point for next fetch cycle
+  proxyIndex = (proxyIndex + 1) % PROXIES.length;
 
   const elapsed = Date.now() - start;
   isFetching = false;
